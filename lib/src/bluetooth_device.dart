@@ -24,8 +24,10 @@ class BluetoothDevice {
   }) async {
     var request = protos.ConnectRequest.create()
       ..remoteId = id.toString()
-      ..androidAutoConnect = autoConnect;
+      ..androidAutoConnect = false; // Not Use AutoConnet for Android, because it will spend a long time to connect.
 
+    // TODO: Custom implement autoconnect.
+    
     Timer timer;
     if (timeout != null) {
       timer = Timer(timeout, () {

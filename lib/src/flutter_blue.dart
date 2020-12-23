@@ -8,9 +8,10 @@ class FlutterBlue {
   final MethodChannel _channel = const MethodChannel('$NAMESPACE/methods');
   final EventChannel _stateChannel = const EventChannel('$NAMESPACE/state');
   final StreamController<MethodCall> _methodStreamController =
-      new StreamController.broadcast(); // ignore: close_sinks
-  Stream<MethodCall> get _methodStream => _methodStreamController
-      .stream; // Used internally to dispatch methods from platform.
+  new StreamController.broadcast(); // ignore: close_sinks
+  Stream<MethodCall> get _methodStream =>
+      _methodStreamController
+          .stream; // Used internally to dispatch methods from platform.
 
   /// Singleton boilerplate
   FlutterBlue._() {
@@ -23,10 +24,12 @@ class FlutterBlue {
   }
 
   static FlutterBlue _instance = new FlutterBlue._();
+
   static FlutterBlue get instance => _instance;
 
   /// Log level of the instance, default is all messages (debug).
   LogLevel _logLevel = LogLevel.debug;
+
   LogLevel get logLevel => _logLevel;
 
   /// Checks whether the device supports Bluetooth
@@ -37,10 +40,11 @@ class FlutterBlue {
   Future<bool> get isOn => _channel.invokeMethod('isOn').then<bool>((d) => d);
 
   BehaviorSubject<bool> _isScanning = BehaviorSubject.seeded(false);
+
   Stream<bool> get isScanning => _isScanning.stream;
 
-  BehaviorSubject<List<ScanResult>> _scanResults = BehaviorSubject.seeded([]);
-  
+  BehaviorSubject<List<ScanResult>> scanResultsSubject = BehaviorSubject.seeded([]);
+
   /// Returns a stream that is a list of [ScanResult] results while a scan is in progress.
   ///
   /// The list emitted is all the scanned results as of the last initiated scan. When a scan is
@@ -48,7 +52,28 @@ class FlutterBlue {
   ///
   /// One use for [scanResults] is as the stream in a StreamBuilder to display the
   /// results of a scan in real time while the scan is in progress.
-  Stream<List<ScanResult>> get scanResults => _scanResults.stream;
+  // Stream<List<ScanResult>> get scanResultsSteam => scanResultsSubject.stream.throttleTime(scanThrottleTime).transform(StreamTransformer.fromHandlers(handleData: _filterResult));
+  Stream<List<ScanResult>> get scanResultsSteam => scanResultsSubject.stream;
+
+  void _filterResult(List<ScanResult> result, EventSink sink) {
+    List<ScanResult> s = result.where(scanFilter).toList();
+
+    s.sort((a, b) => a.rssi > b.rssi ? 1 : 0);
+    // if (isAutoReconnect && currentDevice != null) {
+    //   var matched = s.where((element) => element == currentDevice);
+    //   if (matched.length > 0) {
+    //     stopScan();
+    //     connectDevice(currentDevice);
+    //   }
+    // }
+    // dlog.i('sink.add:${s}, ${s.length}');
+    sink.add(s);
+  }
+
+  Duration scanThrottleTime = Duration(milliseconds: 200);
+  bool Function(ScanResult) scanFilter = (result) {
+    return true;
+  };
 
   PublishSubject _stopScanPill = new PublishSubject();
 
@@ -93,6 +118,7 @@ class FlutterBlue {
     List<Guid> withDevices = const [],
     Duration timeout,
     bool allowDuplicates = false,
+    Duration throttleTime,
   }) async* {
     var settings = protos.ScanSettings.create()
       ..androidScanMode = scanMode.value
@@ -103,9 +129,14 @@ class FlutterBlue {
       throw Exception('Another scan is already in progress.');
     }
 
+    // Update ThrottleTime
+    if (throttleTime != null) {
+      scanThrottleTime = throttleTime;
+    }
+    
     // Emit to isScanning
     _isScanning.add(true);
-
+    
     final killStreams = <Stream>[];
     killStreams.add(_stopScanPill);
     if (timeout != null) {
@@ -113,8 +144,8 @@ class FlutterBlue {
     }
 
     // Clear scan results list
-    _scanResults.add(<ScanResult>[]);
-
+    scanResultsSubject.add(<ScanResult>[]);
+    
     try {
       await _channel.invokeMethod('startScan', settings.writeToBuffer());
     } catch (e) {
@@ -132,14 +163,15 @@ class FlutterBlue {
         .map((buffer) => new protos.ScanResult.fromBuffer(buffer))
         .map((p) {
       final result = new ScanResult.fromProto(p);
-      final list = _scanResults.value;
+      final list = scanResultsSubject.value;
       int index = list.indexOf(result);
       if (index != -1) {
         list[index] = result;
       } else {
         list.add(result);
       }
-      _scanResults.add(list);
+      
+      scanResultsSubject.add(list);
       return result;
     });
   }
@@ -158,15 +190,17 @@ class FlutterBlue {
     List<Guid> withDevices = const [],
     Duration timeout,
     bool allowDuplicates = false,
+    Duration throttleTime,
   }) async {
     await scan(
-            scanMode: scanMode,
-            withServices: withServices,
-            withDevices: withDevices,
-            timeout: timeout,
-            allowDuplicates: allowDuplicates)
+        scanMode: scanMode,
+        withServices: withServices,
+        withDevices: withDevices,
+        timeout: timeout,
+        allowDuplicates: allowDuplicates,
+        throttleTime: throttleTime)
         .drain();
-    return _scanResults.value;
+    return scanResultsSubject.value;
   }
 
   /// Stops a scan for Bluetooth Low Energy devices
@@ -224,6 +258,7 @@ enum BluetoothState {
 
 class ScanMode {
   const ScanMode(this.value);
+
   static const lowPower = const ScanMode(0);
   static const balanced = const ScanMode(1);
   static const lowLatency = const ScanMode(2);
@@ -233,6 +268,7 @@ class ScanMode {
 
 class DeviceIdentifier {
   final String id;
+
   const DeviceIdentifier(this.id);
 
   @override
@@ -252,7 +288,7 @@ class ScanResult {
   ScanResult.fromProto(protos.ScanResult p)
       : device = new BluetoothDevice.fromProto(p.device),
         advertisementData =
-            new AdvertisementData.fromProto(p.advertisementData),
+        new AdvertisementData.fromProto(p.advertisementData),
         rssi = p.rssi;
 
   final BluetoothDevice device;
@@ -262,9 +298,9 @@ class ScanResult {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is ScanResult &&
-          runtimeType == other.runtimeType &&
-          device == other.device;
+          other is ScanResult &&
+              runtimeType == other.runtimeType &&
+              device == other.device;
 
   @override
   int get hashCode => device.hashCode;
@@ -283,18 +319,17 @@ class AdvertisementData {
   final Map<String, List<int>> serviceData;
   final List<String> serviceUuids;
 
-  AdvertisementData(
-      {this.localName,
-      this.txPowerLevel,
-      this.connectable,
-      this.manufacturerData,
-      this.serviceData,
-      this.serviceUuids});
+  AdvertisementData({this.localName,
+    this.txPowerLevel,
+    this.connectable,
+    this.manufacturerData,
+    this.serviceData,
+    this.serviceUuids});
 
   AdvertisementData.fromProto(protos.AdvertisementData p)
       : localName = p.localName,
         txPowerLevel =
-            (p.txPowerLevel.hasValue()) ? p.txPowerLevel.value : null,
+        (p.txPowerLevel.hasValue()) ? p.txPowerLevel.value : null,
         connectable = p.connectable,
         manufacturerData = p.manufacturerData,
         serviceData = p.serviceData,
