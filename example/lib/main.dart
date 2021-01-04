@@ -108,7 +108,7 @@ class FindDevicesScreen extends StatelessWidget {
                 ),
               ),
               StreamBuilder<List<ScanResult>>(
-                stream: FlutterBlue.instance.scanResults,
+                stream: FlutterBlue.instance.scanResultsSteam,
                 initialData: [],
                 builder: (c, snapshot) => Column(
                   children: snapshot.data

@@ -136,12 +136,14 @@ class FlutterBlue {
     
     // Emit to isScanning
     _isScanning.add(true);
-    
+
+
+
     final killStreams = <Stream>[];
     killStreams.add(_stopScanPill);
-    if (timeout != null) {
-      killStreams.add(Rx.timer(null, timeout));
-    }
+    // if (timeout != null) {
+    //   killStreams.add(Rx.timer(null, timeout));
+    // }
 
     // Clear scan results list
     scanResultsSubject.add(<ScanResult>[]);
@@ -153,6 +155,14 @@ class FlutterBlue {
       _stopScanPill.add(null);
       _isScanning.add(false);
       throw e;
+    }
+
+    _scanTimeoutTimer?.cancel();
+    if (timeout != null) {
+      _scanTimeoutTimer = Timer(timeout, () {
+        stopScan();
+      });
+
     }
 
     yield* FlutterBlue.instance._methodStream
@@ -176,6 +186,7 @@ class FlutterBlue {
     });
   }
 
+  Timer _scanTimeoutTimer;
   /// Starts a scan and returns a future that will complete once the scan has finished.
   /// 
   /// Once a scan is started, call [stopScan] to stop the scan and complete the returned future.
@@ -205,6 +216,7 @@ class FlutterBlue {
 
   /// Stops a scan for Bluetooth Low Energy devices
   Future stopScan() async {
+    _scanTimeoutTimer?.cancel();
     await _channel.invokeMethod('stopScan');
     _stopScanPill.add(null);
     _isScanning.add(false);
