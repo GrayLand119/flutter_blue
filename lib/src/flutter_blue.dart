@@ -70,7 +70,7 @@ class FlutterBlue {
     sink.add(s);
   }
 
-  Duration scanThrottleTime = Duration(milliseconds: 200);
+  Duration scanThrottleTime = Duration(milliseconds: 2000);
   bool Function(ScanResult) scanFilter = (result) {
     return true;
   };
@@ -147,7 +147,7 @@ class FlutterBlue {
 
     // Clear scan results list
     scanResultsSubject.add(<ScanResult>[]);
-    
+
     try {
       await _channel.invokeMethod('startScan', settings.writeToBuffer());
     } catch (e) {
@@ -162,8 +162,28 @@ class FlutterBlue {
       _scanTimeoutTimer = Timer(timeout, () {
         stopScan();
       });
-
     }
+
+    _cachedDevices.clear();
+    _updateScanResultTimer?.cancel();
+    // print('scanThrottleTime: $scanThrottleTime');
+    _updateScanResultTimer = Timer.periodic(scanThrottleTime, (t) {
+      // print('check scan result cache');
+      int _nowSec = DateTime.now().millisecondsSinceEpoch;
+      int _diffTime = scanThrottleTime.inMilliseconds;
+      _cachedDevices.removeWhere((key, value) {
+        // print('diff: ${_nowSec - value.date.millisecondsSinceEpoch}');
+        if (_nowSec - value.date.millisecondsSinceEpoch > _diffTime) {
+          // print('!!!!!!! has remove!!!!!');
+          return true;
+        }
+        return false;
+      });
+
+      final list = _cachedDevices.values.map((e) => e.result).toList();
+
+      scanResultsSubject.add(list);
+    });
 
     yield* FlutterBlue.instance._methodStream
         .where((m) => m.method == "ScanResult")
@@ -173,19 +193,34 @@ class FlutterBlue {
         .map((buffer) => new protos.ScanResult.fromBuffer(buffer))
         .map((p) {
       final result = new ScanResult.fromProto(p);
-      final list = scanResultsSubject.value;
-      int index = list.indexOf(result);
-      if (index != -1) {
-        list[index] = result;
-      } else {
-        list.add(result);
-      }
-      
+
+      _cachedDevices[result.device.id.toString()] = GLScanResultCache(result);
+
+      // int _nowSec = DateTime.now().millisecondsSinceEpoch;
+      // _cachedDevices.removeWhere((key, value) {
+      //   if (value.date.millisecondsSinceEpoch - _nowSec > 3000) {
+      //     return true;
+      //   }
+      //   return false;
+      // });
+
+      // final list = scanResultsSubject.value;
+      // int index = list.indexOf(result);
+      // if (index != -1) {
+      //   list[index] = result;
+      // } else {
+      //   list.add(result);
+      // }
+
+      final list = _cachedDevices.values.map((e) => e.result).toList();
+
       scanResultsSubject.add(list);
+
       return result;
     });
   }
-
+  Timer _updateScanResultTimer;
+  Map<String, GLScanResultCache> _cachedDevices = {};
   Timer _scanTimeoutTimer;
   /// Starts a scan and returns a future that will complete once the scan has finished.
   /// 
@@ -217,6 +252,7 @@ class FlutterBlue {
   /// Stops a scan for Bluetooth Low Energy devices
   Future stopScan() async {
     _scanTimeoutTimer?.cancel();
+    _updateScanResultTimer?.cancel();
     await _channel.invokeMethod('stopScan');
     _stopScanPill.add(null);
     _isScanning.add(false);
@@ -350,5 +386,15 @@ class AdvertisementData {
   @override
   String toString() {
     return 'AdvertisementData{localName: $localName, txPowerLevel: $txPowerLevel, connectable: $connectable, manufacturerData: $manufacturerData, serviceData: $serviceData, serviceUuids: $serviceUuids}';
+  }
+}
+
+class GLScanResultCache {
+  ScanResult result;
+  DateTime date;
+  GLScanResultCache(this.result, {this.date}) {
+    if (date == null) {
+      date = DateTime.now();
+    }
   }
 }
